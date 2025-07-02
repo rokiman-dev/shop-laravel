@@ -139,7 +139,7 @@ public function handleCallback(Request $request)
             $payment->status_bayar = 'gagal';
             break;
     }
-
+    $payment->payload_midtrans = json_encode($request->all());
     $order->save();
     $payment->save();
 
