@@ -7,6 +7,8 @@ use App\Models\Payment;
 use App\Models\Order;
 use Midtrans\Snap;
 use Midtrans\Config;
+use Illuminate\Support\Facades\Log;
+
 
 
 class PaymentController extends Controller
@@ -77,6 +79,9 @@ class PaymentController extends Controller
 
 public function handleCallback(Request $request)
 {
+    // Log awal saat callback masuk
+    Log::info('[Midtrans] Callback received', $request->all());
+
     $serverKey = config('midtrans.server_key');
 
     $signatureKey = hash('sha512',
@@ -87,39 +92,62 @@ public function handleCallback(Request $request)
     );
 
     if ($signatureKey !== $request->signature_key) {
+        Log::warning('[Midtrans] Invalid signature', [
+            'expected' => $signatureKey,
+            'received' => $request->signature_key,
+        ]);
         return response()->json(['message' => 'Invalid signature'], 403);
     }
 
-    // Ambil ID dari order_id Midtrans (contoh: INV-123-ABCDE)
-    $orderId = explode('-', $request->order_id)[1] ?? null;
-
-    if (!$orderId) {
-        return response()->json(['message' => 'Invalid order_id'], 400);
-    }
-
-    $order = Order::find($orderId);
+    $order = Order::where('midtrans_order_id', $request->order_id)->first();
     if (!$order) {
+        Log::error('[Midtrans] Order not found', ['order_id' => $request->order_id]);
         return response()->json(['message' => 'Order not found'], 404);
     }
 
-    switch ($request->transaction_status) {
+    $payment = Payment::where('order_id', $order->id)->first();
+    if (!$payment) {
+        Log::error('[Midtrans] Payment not found', ['order_id' => $order->id]);
+        return response()->json(['message' => 'Payment not found'], 404);
+    }
+
+    $transactionStatus = $request->transaction_status;
+
+    Log::info('[Midtrans] Updating status', [
+        'midtrans_order_id' => $request->order_id,
+        'transaction_status' => $transactionStatus,
+    ]);
+
+    // Update status di order dan payment
+    switch ($transactionStatus) {
         case 'capture':
         case 'settlement':
-            $order->status_order = 'dibayar';
+            $order->status_order = 'lunas';
+            $payment->status_bayar = 'success';
+            $payment->waktu_bayar = now();
             break;
 
         case 'pending':
             $order->status_order = 'pending';
+            $payment->status_bayar = 'pending';
             break;
 
         case 'deny':
         case 'cancel':
         case 'expire':
             $order->status_order = 'gagal';
+            $payment->status_bayar = 'gagal';
             break;
     }
 
     $order->save();
+    $payment->save();
+
+    Log::info('[Midtrans] Order & payment updated successfully', [
+        'order_id' => $order->id,
+        'status_order' => $order->status_order,
+        'status_bayar' => $payment->status_bayar,
+    ]);
 
     return response()->json(['message' => 'Callback handled']);
 }

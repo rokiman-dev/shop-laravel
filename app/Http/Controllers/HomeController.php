@@ -6,10 +6,13 @@ use Illuminate\Http\Request;
 use App\Models\Product;
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Models\Payment;
 use Illuminate\Support\Facades\Auth;
 use Midtrans\Config;
 use Midtrans\Snap;
 use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Log;
+
 
 class HomeController extends Controller
 {
@@ -68,18 +71,18 @@ class HomeController extends Controller
     $total = array_sum(array_map(fn($i) => $i['qty'] * $i['harga'], $keranjang));
     $tipe_order = Auth::user()->role === 'mitra' ? 'mitra' : 'customer';
 
-    // 1. Buat Order di database
-    $midtransOrderId = 'INV-' . $orderPrefix = strtoupper(Str::random(5)) . '-' . time();
+    $orderPrefix = strtoupper(Str::random(5)) . '-' . time();
+    $midtransOrderId = 'INV-' . $orderPrefix;
 
-$order = Order::create([
-    'user_id' => Auth::id(),
-    'tipe_order' => $tipe_order,
-    'tanggal_order' => now(),
-    'total_order' => $total,
-    'status_order' => 'pending',
-    'alamat_kirim' => $request->alamat ?? Auth::user()->alamat,
-    'midtrans_order_id' => $midtransOrderId,
-]);
+    $order = Order::create([
+        'user_id' => Auth::id(),
+        'tipe_order' => $tipe_order,
+        'tanggal_order' => now(),
+        'total_order' => $total,
+        'status_order' => 'pending',
+        'alamat_kirim' => $request->alamat ?? Auth::user()->alamat,
+        'midtrans_order_id' => $midtransOrderId,
+    ]);
 
     foreach ($keranjang as $item) {
         OrderItem::create([
@@ -91,19 +94,18 @@ $order = Order::create([
         ]);
     }
 
-    // 2. Konfigurasi Midtrans
+    // Midtrans
     Config::$serverKey = config('midtrans.server_key');
     Config::$isProduction = config('midtrans.is_production');
     Config::$isSanitized = true;
     Config::$is3ds = true;
 
-    // 3. Buat Snap Token
     try {
         $payload = [
             'transaction_details' => [
-    'order_id' => $order->midtrans_order_id,
-    'gross_amount' => $total,
-],
+                'order_id' => $order->midtrans_order_id,
+                'gross_amount' => $total,
+            ],
             'customer_details' => [
                 'first_name' => Auth::user()->name,
                 'email' => Auth::user()->email,
@@ -113,18 +115,26 @@ $order = Order::create([
 
         $snapToken = Snap::getSnapToken($payload);
 
-        // 4. Simpan token & bersihkan keranjang
+    Payment::create([
+        'order_id'          => $order->id,
+        'midtrans_order_id' => $order->midtrans_order_id,
+        'jumlah_bayar'      => $total,
+        'metode_bayar'      => 'midtrans',
+        'status_bayar'      => 'pending',
+    ]);
+
         session()->forget('keranjang');
 
-        // 5. Redirect ke halaman Snap (via view atau JS popup)
         return view('home.snap_checkout', [
             'snapToken' => $snapToken,
             'order' => $order,
         ]);
     } catch (\Exception $e) {
+        Log::error('[Checkout Error] ' . $e->getMessage());
         return redirect()->route('home.myorders.index')->with('error', 'Gagal membuat Snap Token: ' . $e->getMessage());
     }
 }
+
 
     public function pesananSaya()
     {

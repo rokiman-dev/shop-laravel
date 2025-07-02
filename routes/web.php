@@ -17,6 +17,7 @@ use App\Http\Controllers\{
     SupplierProductController,
     HomeController
 };
+use Illuminate\Foundation\Http\Middleware\VerifyCsrfToken;
 
 // =====================
 // KATALOG & KERANJANG
@@ -121,7 +122,9 @@ Route::post('payments/{id}/set-lunas', [PaymentController::class, 'setLunas'])->
 Route::post('payments/create', [PaymentController::class, 'createTransaction'])->name('payments.create');
 
 // Midtrans: Callback Handler
-Route::post('payments/callback', [PaymentController::class, 'handleCallback'])->name('payments.callback');
+Route::post('payments/callback', [PaymentController::class, 'handleCallback'])
+    ->withoutMiddleware([VerifyCsrfToken::class])
+    ->name('payments.callback');
 
 // =====================
 // LAPORAN
